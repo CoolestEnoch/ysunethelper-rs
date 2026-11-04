@@ -2,6 +2,8 @@
 
 燕山大学校园网认证助手的 Rust 实现。支持 CAS 登录、状态查询、登出、免密码切换运营商、在线设备管理，以及自动保持在线的前台守护进程。可复用 Go 版 JSON 配置和 CAS 凭据文件。
 
+[上游](https://github.com/Youwenqwq/ysu-nethelper)
+
 ## 使用
 
 ```sh
@@ -72,7 +74,27 @@ OpenWrt 动态版使用 [scripts/build-openwrt.sh](scripts/build-openwrt.sh) 中
 
 ## 发布
 
-推送 `v*` tag，或在 Actions 手动指定已有 tag。先创建草稿 Release，各架构编译、校验架构和链接方式后直接上传压缩包及 JSON 清单到同一 Release。全部成功后校验 17 个目标的清单、生成 `SHA256SUMS` 并发布。不使用 Actions artifact 中转，也不要求 release-notes Markdown；说明在 Releases 页面手动填写，重跑保留现有说明。
+上传仓库后，普通分支 push 和 pull request 会运行 `Checks`：在 Linux、Windows、macOS 上检查格式、Clippy 和 Rust 测试；Linux 额外运行本地 HTTPS 与 CLI 兼容性测试，并校验 workflow 语法及发布打包逻辑。
+
+发布使用 [Static and MT7621 releases](.github/workflows/release.yml)。提交并推送代码后，再推送 `v*` tag 即可触发全部 17 个目标：
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+也可在 GitHub 仓库的 Actions → Static and MT7621 releases → Run workflow 中填写已存在的 tag。手动运行同样检出该 tag 的代码。工作流使用仓库自带的 `GITHUB_TOKEN` 上传 Release，无需另配 PAT。
+
+MT7621 对应的两个下载文件是：
+
+- `ysunethelper-linux-mipsle-softfloat.tar.gz`：完全静态链接 musl 和 OpenSSL。
+- `ysunethelper-openwrt-mipsel_24kc.tar.gz`：MT7621 动态版，使用系统 musl、OpenSSL 3 和 libgcc。
+
+两种 MIPS 产物都会检查架构、软浮点 ABI、加载器及动态依赖，再用 QEMU 24Kc 执行版本号、HTTPS 模拟门户和 63 组 CLI 兼容性检查。静态 Linux x86_64 也会执行版本查询，确认容器中的程序带入了正确的 tag。
+
+工作流先创建草稿 Release，各架构验证后直接上传压缩包及 JSON 清单，包内包含二进制、README、LICENSE 和配置模板。全部成功后校验 17 个目标的清单、tag 和文件哈希，生成 `SHA256SUMS` 并发布。不使用 Actions artifact 中转，也不要求 release-notes Markdown；说明在 Releases 页面手动填写，重跑保留现有说明。任一构建失败时新 Release 保持草稿，修复后可重跑失败任务。
+
+工作流默认使用 `contents: read`，创建、上传和发布 Release 的任务单独申请 `contents: write`。同一 tag 的发布串行运行。nightly 只用于需要 `build-std` 的目标，其余目标使用 stable。
 
 ## 目录
 
