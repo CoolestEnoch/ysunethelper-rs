@@ -4,3 +4,9 @@
 /cas.json
 *.pyc
 __pycache__/
+
+# Locally copied executables; release assets are produced by Actions.
+/ysunethelper
+/ysunethelper.exe
+/ysunethelper-dynamic
+/ysunethelper-static

@@ -11,14 +11,31 @@ import subprocess
 import tarfile
 import zipfile
 
-ASSETS = {
-    'windows-x86_64', 'windows-x86', 'windows-arm64',
-    'macos-x86_64', 'macos-arm64',
-    'linux-x86_64', 'linux-x86', 'linux-arm32', 'linux-arm64',
-    'linux-riscv64', 'linux-mipsle-softfloat',
-    'android-arm32', 'android-arm64', 'android-x86', 'android-x86_64',
-    'android-riscv64-experimental', 'openwrt-mipsel_24kc',
+TARGETS = {
+    'windows-x86_64': 'x86_64-pc-windows-msvc',
+    'windows-x86': 'i686-pc-windows-msvc',
+    'windows-arm64': 'aarch64-pc-windows-msvc',
+    'macos-x86_64': 'x86_64-apple-darwin',
+    'macos-arm64': 'aarch64-apple-darwin',
+    'linux-x86_64': 'x86_64-unknown-linux-musl',
+    'linux-x86': 'i686-unknown-linux-musl',
+    'linux-arm32': 'armv7-unknown-linux-musleabihf',
+    'linux-arm64': 'aarch64-unknown-linux-musl',
+    'linux-riscv64': 'riscv64gc-unknown-linux-musl',
+    'linux-mipsle-softfloat': 'mipsel-unknown-linux-musl',
+    'android-arm32': 'armv7-linux-androideabi',
+    'android-arm64': 'aarch64-linux-android',
+    'android-x86': 'i686-linux-android',
+    'android-x86_64': 'x86_64-linux-android',
+    'android-riscv64-experimental': 'riscv64-linux-android',
+    'openwrt-mipsel_24kc': 'mipsel-unknown-linux-musl',
 }
+ASSETS = set(TARGETS)
+
+
+def archive_name(name):
+    return 'ysunethelper-' + name + ('.zip' if name.startswith('windows-') else '.tar.gz')
+
 
 
 def pe_imports(data):
@@ -77,7 +94,7 @@ def verify(binary, target, *, openwrt=False):
         assert target == 'mipsel-unknown-linux-musl', 'Wrong OpenWrt Rust target'
         assert 'INTERP' in program and '/lib/ld-musl-mipsel-sf.so.1' in program, 'Wrong OpenWrt dynamic loader'
         needed = re.findall(r'\(NEEDED\).*?\[(.*?)\]', dynamic)
-        assert {'libssl.so.3', 'libcrypto.so.3'} <= set(needed), 'OpenWrt OpenSSL must be shared, not vendored/static'
+        assert {'libc.so', 'libssl.so.3', 'libcrypto.so.3'} <= set(needed), 'OpenWrt musl/OpenSSL must be shared, not vendored/static'
         allowed = {'libc.so', 'libgcc_s.so.1', 'libssl.so.3', 'libcrypto.so.3', 'libatomic.so.1'}
         assert set(needed) <= allowed, f'Unexpected OpenWrt shared libraries: {needed}'
         assert '(RPATH)' not in dynamic and '(RUNPATH)' not in dynamic, 'Build-host paths must not leak into runtime'
@@ -87,6 +104,7 @@ def verify(binary, target, *, openwrt=False):
     if target.startswith('mipsel'):
         abi = subprocess.check_output(['readelf', '-A', str(binary)], text=True, env=dict(os.environ, LC_ALL='C'))
         assert 'Soft float' in abi, f'MIPS artifact is not soft-float:\n{abi}'
+        assert 'ISA: MIPS32r2' in abi, f'MIPS artifact is not compatible with MT7621:\n{abi}'
     if openwrt:
         return {'linkage': 'dynamic OpenWrt musl/OpenSSL', 'sdk': '24.10.4',
                 'cpu': 'MIPS32r2 / 24Kc soft-float', 'needed': needed,
@@ -95,7 +113,7 @@ def verify(binary, target, *, openwrt=False):
 
 
 def package(target, name):
-    assert name in ASSETS, name
+    assert TARGETS.get(name) == target, f'Unexpected release target/name: {target} / {name}'
     binary = Path('target') / target / 'release' / ('ysunethelper.exe' if 'windows' in target else 'ysunethelper')
     info = verify(binary, target, openwrt=name == 'openwrt-mipsel_24kc')
     binary.chmod(0o755)
@@ -114,6 +132,7 @@ def package(target, name):
             for path, arc in files:
                 t.add(path, arcname=stem + '/' + arc)
     info.update(target=target, name=name, archive=archive.name,
+                version=os.environ.get('YSUNETHELPER_VERSION'),
                 sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
     (dist / (stem + '.json')).write_text(json.dumps(info, indent=2) + '\n')
 
@@ -123,9 +142,18 @@ def checksums():
     manifests = [json.loads(p.read_text()) for p in dist.glob('*.json')]
     assert len(manifests) == len(ASSETS), 'Incomplete or duplicate build matrix'
     assert {m['name'] for m in manifests} == ASSETS, 'Release target mismatch'
+    expected_files = set()
+    version = os.environ.get('YSUNETHELPER_VERSION')
     for m in manifests:
-        assert hashlib.sha256((dist / m['archive']).read_bytes()).hexdigest() == m['sha256'], m['name']
+        name = m['name']
+        assert m['target'] == TARGETS[name], f'Wrong target for {name}'
+        assert m['archive'] == archive_name(name), f'Wrong archive for {name}'
+        if version:
+            assert m.get('version') == version, f'Wrong release version for {name}'
+        assert hashlib.sha256((dist / m['archive']).read_bytes()).hexdigest() == m['sha256'], name
+        expected_files.update({m['archive'], 'ysunethelper-' + name + '.json'})
     assets = sorted(p for p in dist.iterdir() if p.name != 'SHA256SUMS')
+    assert {p.name for p in assets} == expected_files, 'Unexpected or missing release files'
     (dist / 'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in assets))
 
 

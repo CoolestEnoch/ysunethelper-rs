@@ -1,3 +1,7 @@
+[build.env]
+# cross runs rustc inside a container; release version must be passed explicitly.
+passthrough = ["YSUNETHELPER_VERSION"]
+
 # MIPS is tier 3: compile std and link against the cross image's soft-float musl.
 [target.mipsel-unknown-linux-musl]
 dockerfile = "scripts/Dockerfile.mipsel"

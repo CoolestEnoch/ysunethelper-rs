@@ -1,4 +1,4 @@
-name: Build and release
+name: Static and MT7621 releases
 on:
   push:
     tags: ['v*']
@@ -31,6 +31,11 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - name: Validate release tag
+        shell: bash
+        run: |
+          git check-ref-format "refs/tags/$RELEASE_TAG"
+          git rev-parse --verify "refs/tags/$RELEASE_TAG"
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -121,6 +126,14 @@ jobs:
           cross +"$TOOLCHAIN" build --locked --release --target "$TARGET"
       - name: Verify static ELF and package
         run: python3 scripts/package-release.py --target ${{ matrix.target }} --name ${{ matrix.name }}
+      - name: Verify embedded version on Linux x86_64
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: test "$(target/x86_64-unknown-linux-musl/release/ysunethelper version)" = "ysunethelper $RELEASE_TAG"
+      - name: Run MT7621 static executable
+        if: matrix.target == 'mipsel-unknown-linux-musl'
+        run: |
+          sudo apt-get update && sudo apt-get install -y qemu-user
+          python3 scripts/smoke-mt7621.py --binary target/mipsel-unknown-linux-musl/release/ysunethelper --version "$RELEASE_TAG"
       - name: Upload directly to GitHub Release
         shell: bash
         env:
@@ -177,6 +190,7 @@ jobs:
   openwrt:
     needs: prepare
     runs-on: ubuntu-24.04
+    name: MT7621 dynamic musl and OpenSSL
     timeout-minutes: 120
     permissions:
       contents: write
@@ -188,11 +202,19 @@ jobs:
         with:
           components: rust-src
       - name: Install SDK build prerequisites
-        run: sudo apt-get update && sudo apt-get install -y build-essential clang flex bison gawk gettext libncurses-dev libssl-dev python3-setuptools rsync unzip zstd file
-      - name: Build with OpenWrt mipsel_24kc SDK (dynamic libc and OpenSSL)
+        run: sudo apt-get update && sudo apt-get install -y build-essential clang flex bison gawk gettext libncurses-dev libssl-dev python3-setuptools rsync unzip zstd file qemu-user
+      - name: Build MT7621 with OpenWrt SDK (dynamic libc and OpenSSL)
+        id: build
         run: bash scripts/build-openwrt.sh
       - name: Verify dynamic ABI and package
         run: python3 scripts/package-release.py --target mipsel-unknown-linux-musl --name openwrt-mipsel_24kc
+      - name: Run MT7621 dynamic executable
+        env:
+          MT7621_SYSROOT: ${{ steps.build.outputs.sysroot }}
+          MT7621_LIBRARY_PATH: ${{ steps.build.outputs.library_path }}
+        run: |
+          python3 scripts/smoke-mt7621.py --binary target/mipsel-unknown-linux-musl/release/ysunethelper \
+            --sysroot "$MT7621_SYSROOT" --library-path "$MT7621_LIBRARY_PATH" --version "$RELEASE_TAG"
       - name: Upload directly to GitHub Release
         shell: bash
         env:

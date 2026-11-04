@@ -28,6 +28,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+      - name: Validate workflow syntax
+        uses: docker://rhysd/actionlint:1.7.12
+      - name: Check release packaging
+        run: python3 tests/release_workflow.py
       - name: Check shell and Python syntax
         run: |
           for script in scripts/*.sh; do bash -n "$script"; done
