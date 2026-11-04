@@ -1,0 +1,221 @@
+name: Build and release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release (for example v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  CARGO_INCREMENTAL: '0'
+  YSUNETHELPER_VERSION: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --notes ""
+          fi
+
+  native:
+    needs: prepare
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-2022, target: x86_64-pc-windows-msvc, name: windows-x86_64, flags: '-C target-feature=+crt-static'}
+          - {os: windows-2022, target: i686-pc-windows-msvc, name: windows-x86, flags: '-C target-feature=+crt-static'}
+          - {os: windows-2022, target: aarch64-pc-windows-msvc, name: windows-arm64, flags: '-C target-feature=+crt-static'}
+          - {os: macos-15, target: aarch64-apple-darwin, name: macos-arm64, flags: ''}
+          - {os: macos-15, target: x86_64-apple-darwin, name: macos-x86_64, flags: ''}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build (static CRT on Windows; system frameworks on macOS)
+        env:
+          RUSTFLAGS: ${{ matrix.flags }}
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Verify and package
+        run: python scripts/package-release.py --target ${{ matrix.target }} --name ${{ matrix.name }}
+      - name: Upload directly to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber
+
+  linux:
+    needs: prepare
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: x86_64-unknown-linux-musl, name: linux-x86_64, toolchain: stable}
+          - {target: i686-unknown-linux-musl, name: linux-x86, toolchain: stable}
+          - {target: armv7-unknown-linux-musleabihf, name: linux-arm32, toolchain: stable}
+          - {target: aarch64-unknown-linux-musl, name: linux-arm64, toolchain: stable}
+          - {target: riscv64gc-unknown-linux-musl, name: linux-riscv64, toolchain: stable}
+          - {target: mipsel-unknown-linux-musl, name: linux-mipsle-softfloat, toolchain: nightly}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install target toolchain
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rust-src
+          if [ "$TOOLCHAIN" = stable ]; then rustup target add --toolchain stable "$TARGET"; fi
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff --locked
+      - name: Compile with static musl and vendored OpenSSL
+        env:
+          TARGET: ${{ matrix.target }}
+          TOOLCHAIN: ${{ matrix.toolchain }}
+          RUSTFLAGS: '-C target-feature=+crt-static -C link-self-contained=yes'
+        run: |
+          if [ "$TARGET" = mipsel-unknown-linux-musl ]; then
+            # Tier-3 std has no rustup-bundled CRT/unwind; use the complete image sysroot.
+            # rustc uses -nodefaultlibs. GCC-built OpenSSL still needs helpers
+            # such as __ucmpdi2; append libgcc after the referring archives.
+            export RUSTFLAGS='-C target-feature=+crt-static -C link-self-contained=no -C link-arg=-lgcc'
+          fi
+          cross +"$TOOLCHAIN" build --locked --release --target "$TARGET"
+      - name: Verify static ELF and package
+        run: python3 scripts/package-release.py --target ${{ matrix.target }} --name ${{ matrix.name }}
+      - name: Upload directly to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber
+
+  android:
+    needs: prepare
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: armv7-linux-androideabi, clang: armv7a-linux-androideabi, api: 23, name: android-arm32, toolchain: stable}
+          - {target: aarch64-linux-android, clang: aarch64-linux-android, api: 23, name: android-arm64, toolchain: stable}
+          - {target: i686-linux-android, clang: i686-linux-android, api: 23, name: android-x86, toolchain: stable}
+          - {target: x86_64-linux-android, clang: x86_64-linux-android, api: 23, name: android-x86_64, toolchain: stable}
+          # The NDK r27 RISC-V sysroot is provisional, not a stable Android ABI.
+          - {target: riscv64-linux-android, clang: riscv64-linux-android, api: 35, name: android-riscv64-experimental, toolchain: nightly}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Android command-line tools and NDK
+        run: bash scripts/setup-android.sh
+      - name: Install Rust target toolchain
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rust-src
+          if [ "$TOOLCHAIN" = stable ]; then rustup target add --toolchain stable "$TARGET"; fi
+      - name: Build native static executable (not APK)
+        env:
+          TARGET: ${{ matrix.target }}
+          CLANG_TARGET: ${{ matrix.clang }}
+          ANDROID_API: ${{ matrix.api }}
+          TOOLCHAIN: ${{ matrix.toolchain }}
+        run: bash scripts/build-android.sh
+      - name: Verify static ELF and package
+        run: python3 scripts/package-release.py --target ${{ matrix.target }} --name ${{ matrix.name }}
+      - name: Upload directly to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber
+
+  openwrt:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Install SDK build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y build-essential clang flex bison gawk gettext libncurses-dev libssl-dev python3-setuptools rsync unzip zstd file
+      - name: Build with OpenWrt mipsel_24kc SDK (dynamic libc and OpenSSL)
+        run: bash scripts/build-openwrt.sh
+      - name: Verify dynamic ABI and package
+        run: python3 scripts/package-release.py --target mipsel-unknown-linux-musl --name openwrt-mipsel_24kc
+      - name: Upload directly to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" dist/* --clobber
+
+  release:
+    needs: [native, linux, android, openwrt]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - name: Verify Release assets and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist
+          gh release download "$RELEASE_TAG" --dir dist --pattern 'ysunethelper-*'
+          python3 scripts/package-release.py --checksums
+          gh release upload "$RELEASE_TAG" dist/SHA256SUMS --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

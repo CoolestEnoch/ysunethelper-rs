@@ -1,0 +1,36 @@
+[package]
+name = "ysunethelper"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "燕山大学校园网认证助手"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "form", "native-tls-vendored"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "time"] }
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
+html-escape = "0.2"
+cookie = "0.18"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+base64 = "0.22"
+rand = "0.8"
+rpassword = "7"
+ctrlc = { version = "3", features = ["termination"] }
+
+[dev-dependencies]
+tiny_http = "0.12"
+tempfile = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

@@ -1,0 +1,12 @@
+FROM ghcr.io/cross-rs/mipsel-unknown-linux-musl:main
+# Tier-3 build-std has no rustup-bundled libunwind. Resolve the image's own
+# toolchain names and use LLVM's supported runtimes CMake entry point.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 && \
+    rm -rf /var/lib/apt/lists/*
+COPY scripts/build-mips-unwind.sh /build-mips-unwind.sh
+RUN mkdir -p /tmp/llvm-src && \
+    curl --fail --location --retry 3 https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-19.1.7.tar.gz \
+      | tar -xz -C /tmp/llvm-src --strip-components=1 && \
+    bash /build-mips-unwind.sh /tmp/llvm-src /tmp/unwind-build && \
+    rm -rf /tmp/llvm-src /tmp/unwind-build /build-mips-unwind.sh

@@ -1,0 +1,15 @@
+# MIPS is tier 3: compile std and link against the cross image's soft-float musl.
+[target.mipsel-unknown-linux-musl]
+dockerfile = "scripts/Dockerfile.mipsel"
+build-std = true
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:main"
+[target.i686-unknown-linux-musl]
+image = "ghcr.io/cross-rs/i686-unknown-linux-musl:main"
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
+[target.armv7-unknown-linux-musleabihf]
+image = "ghcr.io/cross-rs/armv7-unknown-linux-musleabihf:main"
+[target.riscv64gc-unknown-linux-musl]
+image = "ghcr.io/cross-rs/riscv64gc-unknown-linux-musl:main"

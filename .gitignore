@@ -1,0 +1,6 @@
+/target/
+/dist/
+/ysunethelper.json
+/cas.json
+*.pyc
+__pycache__/
