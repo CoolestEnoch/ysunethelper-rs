@@ -1,6 +1,6 @@
 # YSU-NetHelper Rust
 
-燕山大学校园网认证助手的 Rust 实现。支持 CAS 登录、状态查询、登出、免密码切换运营商、在线设备管理，以及自动保持在线的前台守护进程。可复用 Go 版 JSON 配置和 CAS 凭据文件。
+~~*燕山大学*~~哈尔滨工业大学秦皇岛校区校园网认证助手的 Rust 实现。支持 CAS 登录、状态查询、登出、免密码切换运营商、在线设备管理，以及自动保持在线的前台守护进程。可复用 Go 版 JSON 配置和 CAS 凭据文件。
 
 [上游](https://github.com/Youwenqwq/ysu-nethelper)
 
