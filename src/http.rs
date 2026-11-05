@@ -1,15 +1,13 @@
 use crate::{Failure, shutdown};
 use anyhow::{Context, Result, bail, ensure};
 use reqwest::{
-    Url,
-    blocking::{Client, RequestBuilder},
+    Client, RequestBuilder, Url,
     header::{ACCEPT, ACCEPT_LANGUAGE, COOKIE, HeaderMap, HeaderValue, SET_COOKIE},
     redirect::Policy,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     cell::{Cell, RefCell},
-    io::Read,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -124,6 +122,7 @@ pub struct Http {
     pub cookies: RefCell<Cookies>,
     pub deadline: Cell<Option<Instant>>,
     timeout: Duration,
+    runtime: shutdown::Runtime,
 }
 impl Http {
     pub fn new(timeout: Duration) -> Result<Self> {
@@ -138,6 +137,7 @@ impl Http {
             cookies: RefCell::default(),
             deadline: Cell::new(None),
             timeout,
+            runtime: shutdown::Runtime::new()?,
         })
     }
     pub fn send(&self, url: &str, mut builder: RequestBuilder) -> Result<Response> {
@@ -160,32 +160,41 @@ impl Http {
             h.set_sensitive(true);
             builder = builder.header(COOKIE, h);
         }
-        let response = builder
-            .timeout(timeout)
-            .send()
-            .map_err(|e| Failure::Network(e.without_url().into()))?;
-        for header in response.headers().get_all(SET_COOKIE) {
-            if let Ok(value) = header.to_str() {
-                self.cookies.borrow_mut().absorb(&parsed, value);
+        self.runtime.block_on(async {
+            let mut response = builder
+                .timeout(timeout)
+                .send()
+                .await
+                .map_err(|e| Failure::Network(e.without_url().into()))?;
+            for header in response.headers().get_all(SET_COOKIE) {
+                if let Ok(value) = header.to_str() {
+                    self.cookies.borrow_mut().absorb(&parsed, value);
+                }
             }
-        }
-        let status = response.status().as_u16();
-        let location = response
-            .headers()
-            .get("location")
-            .and_then(|h| h.to_str().ok())
-            .map(str::to_owned);
-        let mut bytes = Vec::new();
-        response
-            .take(4 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| Failure::Network(e.into()))?;
-        ensure!(bytes.len() <= 4 * 1024 * 1024, "响应超过 4 MiB");
-        Ok(Response {
-            status,
-            location,
-            body: String::from_utf8_lossy(&bytes).into_owned(),
-        })
+            let status = response.status().as_u16();
+            let location = response
+                .headers()
+                .get("location")
+                .and_then(|h| h.to_str().ok())
+                .map(str::to_owned);
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|e| Failure::Network(e.without_url().into()))?
+            {
+                ensure!(
+                    bytes.len() + chunk.len() <= 4 * 1024 * 1024,
+                    "响应超过 4 MiB"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(Response {
+                status,
+                location,
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            })
+        })?
     }
     pub fn get(&self, url: &str) -> Result<Response> {
         self.send(url, self.client.get(url))

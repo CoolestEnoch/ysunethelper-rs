@@ -63,6 +63,7 @@ impl Cas {
         Ok(())
     }
     pub fn save(&self, path: &Path) -> Result<()> {
+        crate::shutdown::check()?;
         let parsed = Url::parse(&self.base)?;
         let host = parsed.host_str().unwrap_or_default();
         let cookies = self
@@ -183,6 +184,7 @@ impl Cas {
             })
             .into());
         }
+        crate::shutdown::check()?;
         self.username = username.into();
         Ok(())
     }

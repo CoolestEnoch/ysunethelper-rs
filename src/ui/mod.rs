@@ -101,6 +101,7 @@ pub fn menu(portal: &Portal) -> Result<()> {
                 services
             }
             Err(e) => {
+                shutdown::check()?;
                 eprintln!("读取失败: {e}");
                 vec![]
             }
@@ -131,10 +132,14 @@ pub fn menu(portal: &Portal) -> Result<()> {
             };
             match portal.switch(&target.value) {
                 Ok(st) => println!("当前运营商: {} / IP: {}", st.service, st.user_ip),
-                Err(e) => eprintln!("切换失败: {e}"),
+                Err(e) => {
+                    shutdown::check()?;
+                    eprintln!("切换失败: {e}");
+                }
             };
             break;
         }
     }
     Ok(())
 }
+pub mod input;

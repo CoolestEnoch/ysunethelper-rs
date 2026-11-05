@@ -169,3 +169,29 @@ fn hard_failures_and_login_circuit_breaker() {
         );
     }
 }
+
+#[test]
+fn runtime_shutdown_does_not_wait_for_blocked_dns_workers() {
+    use std::{sync::mpsc, time::Instant};
+    let runtime = ysunethelper::shutdown::Runtime::new().unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    runtime
+        .block_on(async {
+            // reqwest's system resolver uses the same non-cancellable blocking pool.
+            tokio::task::spawn_blocking(move || {
+                started_tx.send(()).unwrap();
+                let _ = release_rx.recv_timeout(Duration::from_secs(3));
+            });
+        })
+        .unwrap();
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let start = Instant::now();
+    drop(runtime);
+    let elapsed = start.elapsed();
+    let _ = release_tx.send(());
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "runtime waited for a resolver worker: {elapsed:?}"
+    );
+}

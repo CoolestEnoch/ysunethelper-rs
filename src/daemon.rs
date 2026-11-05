@@ -108,6 +108,9 @@ pub fn run(cfg: &Config, verbose: bool) -> Result<()> {
         let status = match portal.status() {
             Ok(st) => st,
             Err(e) => {
+                if shutdown::stopped() {
+                    break;
+                }
                 eprintln!("状态查询失败: {e}");
                 if is_network(&e) {
                     state = "NO_LINK";

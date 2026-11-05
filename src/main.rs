@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::CommandFactory;
 use cli::{Cli, Command, VERSION};
 use serde_json::json;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use ysunethelper::{
     Failure,
     cas::Cas,
@@ -17,10 +17,10 @@ use ysunethelper::{
 fn main() {
     let cli = cli::parse();
     let result = shutdown::install().and_then(|_| run(cli));
+    if shutdown::stopped() {
+        std::process::exit(130);
+    }
     if let Err(e) = result {
-        if shutdown::stopped() {
-            std::process::exit(130);
-        }
         eprintln!("ysunethelper: {e:#}");
         let hard = e
             .chain()
@@ -101,6 +101,7 @@ fn run(cli: Cli) -> Result<()> {
             // Preserve the Go CLI's text suffix even when --json is also specified.
             if test {
                 for r in Prober::new(&cfg.daemon.probe_urls, cfg.daemon.probe_timeout.0)?.check() {
+                    shutdown::check()?;
                     println!(
                         "internet probe {} {} ({})",
                         if r.ok { "OK  " } else { "FAIL" },
@@ -108,6 +109,7 @@ fn run(cli: Cli) -> Result<()> {
                         r.detail
                     );
                 }
+                shutdown::check()?;
                 println!(
                     "status: {} (portal)",
                     if st.online { "ONLINE" } else { "OFFLINE" }
@@ -142,13 +144,10 @@ fn run(cli: Cli) -> Result<()> {
                         io::stdin().is_terminal(),
                         "缺少账号密码，请使用配置文件或 -u/-p（交互登录需要终端）"
                     );
-                    eprint!("用户名: ");
-                    io::stderr().flush()?;
-                    let mut line = String::new();
-                    io::stdin().read_line(&mut line)?;
+                    let line = ui::input::line("用户名: ", false)?;
                     cfg.username = line.trim().into();
                     anyhow::ensure!(!cfg.username.is_empty(), "用户名不能为空");
-                    cfg.password = rpassword::prompt_password("密码: ")?;
+                    cfg.password = ui::input::line("密码: ", true)?;
                     anyhow::ensure!(!cfg.password.is_empty(), "密码不能为空");
                 }
                 cas.login(&cfg.username, &cfg.password)?;

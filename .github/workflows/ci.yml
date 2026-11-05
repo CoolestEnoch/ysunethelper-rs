@@ -24,6 +24,7 @@ jobs:
         run: |
           python3 tests/embedded_smoke.py target/debug/ysunethelper
           python3 tests/compatibility.py --rust target/debug/ysunethelper
+          python3 tests/interruptions.py --binary target/debug/ysunethelper
   workflow:
     runs-on: ubuntu-24.04
     steps:
